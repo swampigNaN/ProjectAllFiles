@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>send 照明状況</title>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+<style>
+  body { font-family: monospace; background: #222; color: #ddd; padding: 20px; text-align: center; }
+  h1 { color: #fff; border-bottom: 1px solid #444; padding-bottom: 15px; }
+  #main { max-width: 800px; margin: auto; }
+  #output { 
+    background: #000; color: #0f0; 
+    padding: 15px; height: 350px; 
+    overflow-y: scroll; 
+    border: 1px solid #444; border-radius: 5px; 
+    text-align: left; font-size: 13px;
+    box-shadow: inset 0 0 10px rgba(0,0,0,0.5);
+  }
+  button { 
+    padding: 15px 30px; font-size: 18px; cursor: pointer; 
+    background: #E65100; color: white; border: none; border-radius: 5px; 
+    font-weight: bold; margin-bottom: 20px; transition: 0.3s;
+  }
+  button:hover { background: #EF6C00; }
+  button:disabled { background: #555; cursor: default; }
+  .log-ts { color: #888; margin-right: 10px; }
+  .log-val { color: #0ff; font-weight: bold; }
+  .log-err { color: #f44336; }
+</style>
+</head>
+<body>
+
+<div id="main">
+  <h1>send 照明状況</h1>
+  <button id="connectBtn">🔌 Connect micro:bit</button>
+  <div id="output">Click "Connect" to start...<br>(Array[0] will be ignored)</div>
+</div>
+
+<script>
+// Firebase設定
+const firebaseConfig = {
+  apiKey: "AIzaSyAt9FoenejYFhDIDZg5BTYfcl0x-czJ4v4",
+  authDomain: "server-f5ca2.firebaseapp.com",
+  databaseURL: "https://server-f5ca2-default-rtdb.firebaseio.com",
+  projectId: "server-f5ca2",
+  storageBucket: "server-f5ca2.appspot.com",
+  messagingSenderId: "911418656641",
+  appId: "1:911418656641:web:00d6d168eba14ebf984a80",
+};
+firebase.initializeApp(firebaseConfig);
+const database = firebase.database();
+
+let port, reader;
+const outputDiv = document.getElementById('output');
+
+function log(msg, type='info') {
+    const d = new Date();
+    const ts = d.toLocaleTimeString();
+    let content = msg;
+    if(type === 'data') content = `<span class="log-val">${msg}</span>`;
+    if(type === 'error') content = `<span class="log-err">${msg}</span>`;
+    outputDiv.innerHTML = `<div class="log-line"><span class="log-ts">[${ts}]</span>${content}</div>` + outputDiv.innerHTML;
+}
+
+async function connectMicrobit() {
+  try {
+    port = await navigator.serial.requestPort();
+    await port.open({ baudRate: 115200 });
+    
+    const btn = document.getElementById('connectBtn');
+    btn.textContent = "✅ Connected & Sending...";
+    btn.disabled = true;
+    btn.style.background = "#2E7D32";
+    log("Serial port opened successfully.");
+
+    reader = port.readable.getReader();
+    let buffer = '';
+    const textDecoder = new TextDecoder();
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) { reader.releaseLock(); break; }
+      if (!value) continue;
+
+      buffer += textDecoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop(); 
+
+      lines.forEach(processDataLine);
+    }
+  } catch (err) {
+    console.error(err);
+    log("Connection Failed: " + err.message, 'error');
+  }
+}
+
+function processDataLine(line) {
+    line = line.trim();
+    if (!line) return;
+
+    try {
+        let arr = [];
+        // データ形式に合わせてパース (bytearray, JSON, CSVなど)
+        if (line.startsWith("bytearray")) {
+            const match = line.match(/bytearray\(b'(.*)'\)/);
+            if (match) {
+                let hexStr = match[1];
+                arr = hexStr.split('\\x').filter(s=>s).map(s=>parseInt(s,16));
+            }
+        } else if (line.startsWith("[")) {
+            arr = JSON.parse(line);
+        } else {
+            arr = line.split(',').map(n => parseInt(n.trim())).filter(n => !isNaN(n));
+        }
+
+        // データ長足りないなら弾く
+        if (arr.length <= 1) return; 
+
+        const now = new Date();
+        const obj = { timestamp: now.getTime() };
+
+        // 先頭(0番目)は不要なのでスキップして、1番目から room データとして詰める
+        // 最大18部屋まで
+        for (let i = 1; i < arr.length && i <= 18; i++) {
+            obj["room" + i] = arr[i];
+        }
+
+        // 日付キー (YYYY-MM-DD)
+        const y = now.getFullYear();
+        const m = ('0' + (now.getMonth() + 1)).slice(-2);
+        const d = ('0' + now.getDate()).slice(-2);
+        const dateKey = `${y}-${m}-${d}`;
+
+        // DB更新
+        const updates = {};
+        updates['rooms/latest'] = obj;
+        
+        // 履歴も保存
+        const newRef = database.ref().child('rooms/history/' + dateKey).push();
+        updates['rooms/history/' + dateKey + '/' + newRef.key] = obj;
+
+        database.ref().update(updates);
+        
+        // 画面ログ出力
+        log(`Sent: [${arr.join(',')}] to ${dateKey}`, 'data');
+
+    } catch (e) {
+        // パース失敗時は無視
+    }
+}
+
+document.getElementById("connectBtn").addEventListener("click", connectMicrobit);
+</script>
+</body>
+</html>
