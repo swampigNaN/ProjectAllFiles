@@ -1,0 +1,22 @@
+from microbit import *
+import radio
+
+# 無線通信の初期設定
+radio.config(group=255, power=7)
+radio.on()
+roomN = 2
+while True:
+    # 受信したメッセージを取得
+    data = radio.receive_bytes()
+    if data:
+        data = bytearray(data)
+        if data[roomN-1] != 0 and data[roomN+1] == 0:
+            level = display.read_light_level()  # 0～255の明るさを取得
+            mapped = scale(level, from_=(0,255), to=(0,9))  # 明るさを0～9にマッピング
+            # 明るさに応じてデータを変更
+            if mapped >= 6:
+                data[roomN] = 1
+            else:
+                data[roomN] = 2
+            radio.send_bytes(data)  # データを送信
+                

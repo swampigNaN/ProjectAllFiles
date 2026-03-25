@@ -1,0 +1,16 @@
+from microbit import *
+import radio
+
+# 無線通信の初期設定
+radio.config(group=255, power=7)
+radio.on()
+
+data =[0] * 19 # 0 で初期化された長さ 19 の配列
+while True:
+        mapped = scale(display.read_light_level(), from_=(0,255), to=(0,9))
+        if mapped >= 6:
+            data[1] = 1
+        else:
+            data[1] = 2
+        radio.send_bytes(bytearray(data))
+        sleep(1000)
